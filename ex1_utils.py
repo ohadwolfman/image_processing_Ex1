@@ -106,39 +106,39 @@ def hsitogramEqualize(imgOrig: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarra
         :param imgOrig: Original Histogram
         :ret
     """
-    img = np.copy(imgOrig)
-    origSize = img.shape
+    processingImg = np.copy(imgOrig)
+    origSize = processingImg.shape
+
     if (imgOrig.ndim == 3):
-        yiqImage = transformRGB2YIQ(imgOrig)  ## transformRGB2YIQ2 returns values in [0,1]
-        img = yiqImage[:, :, 0]
-        origSize = img.shape
+        yiqImage = transformRGB2YIQ(imgOrig)
+        processingImg = yiqImage[:, :, 0]
+        origSize = processingImg.shape
+        processingImg = ((processingImg.flatten()) * 255).astype(np.uint8)
+        histOrg, bins = np.histogram(processingImg.flatten(), bins=256, range=[0, 256])
 
-    print("origSize", origSize)
+    else:  ##(imgOrig.ndim == 2):
+        processingImg = ((processingImg.flatten()) * 255).astype(np.uint8)
+        histOrg, bins = np.histogram(processingImg.flatten(), bins=256, range=[0, 256])
 
-    Ycolor0to1 = img.flatten()
-    print("Ycolor", Ycolor0to1)
-    print("Ycolor.shape", Ycolor0to1.shape)
-
-    Ycolor0to255 = (Ycolor0to1 * 255).astype(np.uint8)
-    histOrg, bins = np.histogram(Ycolor0to255, bins=256, range=[0, 256])
     cdf = np.cumsum(histOrg)
     cdf_normalized = cdf / cdf[-1]
 
     new_colors = (255 * cdf_normalized).astype(np.uint8)  # lookup table
-    print("new_colors.shape", new_colors.shape)
 
-    for pixel in range(Ycolor0to255.shape[0]):
-        old_color = Ycolor0to255[pixel]
-        Ycolor0to255[pixel] = new_colors[old_color]
-    print("Ycolor0to255", Ycolor0to255)
+    for pixel in range(processingImg.shape[0]):
+        old_color = processingImg[pixel]
+        processingImg[pixel] = new_colors[old_color]
 
-    imEq = Ycolor0to255.reshape(origSize) / 255
+    processingImg = processingImg.reshape(origSize)
+    imEq = processingImg
+
     if (imgOrig.ndim == 3):
-        imEq = ((transformYIQ2RGB(yiqImage)) * 255).astype(np.uint8)
+        yiqImage[:, :, 0] = processingImg
+        imEq = ((transformYIQ2RGB(yiqImage)) * 255).astype(np.uint8) / 255
 
-    histEQ, binsEq = np.histogram(imEq.flatten(), bins=256, range=(0, 256), density=False)  # imgEq=imgEq/255
+    histEQ, binsEq = np.histogram(imEq.flatten(), bins=256, range=[0, 256])
+    imEq = imEq / 255
     plt.plot(histEQ, color='blue')
-    plt.xlim([0, 256])
     plt.legend(('histEQ', 'imgEq'), loc='upper left')
     plt.show()
     return imEq, histOrg, histEQ
