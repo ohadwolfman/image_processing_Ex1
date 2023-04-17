@@ -102,23 +102,28 @@ def transformYIQ2RGB(imgYIQ: np.ndarray) -> np.ndarray:
 
 def hsitogramEqualize(imgOrig: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarray):
     """
-        Equalizes the histogram of an image
-        :param imgOrig: Original Histogram
-        :ret
+    Equalizes the histogram of an image
+    param imgOrig: Original image: values in the range [0; 255]
+    return: (imgEq, histOrg, histEQ)
+            imEq - the new image with the equalized histogram
+            histOrg - the histogram of the original image
+            histEQ -the histogram of the imgEq
     """
-    processingImg = np.copy(imgOrig)
+    processingImg = np.copy(imgOrig)*255
     origSize = processingImg.shape
 
     if (imgOrig.ndim == 3):
         yiqImage = transformRGB2YIQ(imgOrig)
         processingImg = yiqImage[:, :, 0]
         origSize = processingImg.shape
-        processingImg = ((processingImg.flatten()) * 255).astype(np.uint8)
+        processingImg = processingImg.astype(np.uint8)
         histOrg, bins = np.histogram(processingImg.flatten(), bins=256, range=[0, 256])
 
-    else:  ##(imgOrig.ndim == 2):
-        processingImg = ((processingImg.flatten()) * 255).astype(np.uint8)
+    elif(imgOrig.ndim == 2):
+        processingImg = processingImg.astype(np.uint8)
         histOrg, bins = np.histogram(processingImg.flatten(), bins=256, range=[0, 256])
+    else:
+        raise("error")
 
     cdf = np.cumsum(histOrg)
     cdf_normalized = cdf / cdf[-1]
@@ -134,7 +139,7 @@ def hsitogramEqualize(imgOrig: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarra
 
     if (imgOrig.ndim == 3):
         yiqImage[:, :, 0] = processingImg
-        imEq = ((transformYIQ2RGB(yiqImage)) * 255).astype(np.uint8) / 255
+        imEq = ((transformYIQ2RGB(yiqImage)) * 255).astype(np.uint8)
 
     histEQ, binsEq = np.histogram(imEq.flatten(), bins=256, range=[0, 256])
     imEq = imEq / 255
@@ -152,4 +157,46 @@ def quantizeImage(imOrig: np.ndarray, nQuant: int, nIter: int) -> (List[np.ndarr
         :param nIter: Number of optimization loops
         :return: (List[qImage_i],List[error_i])
     """
-    pass
+    # Convert image to float and scale to range [0, 1].
+    imOrig = imOrig.astype(float) / 255.0
+
+    # Get image dimensions.
+    height, width, channels = imOrig.shape
+    pixels = height * width
+
+    # Initialize the centroids randomly.
+    centroids = np.random.rand(nQuant, channels)
+
+    # Repeat the optimization process for nIter iterations.
+    quantized_images = []
+    errors = []
+    for iteration in range(nIter):
+        # Compute the Euclidean distances between each pixel and each centroid.
+        distances = np.sqrt(
+            np.sum((imOrig.reshape(pixels, 1, channels) - centroids.reshape(1, nQuant, channels)) ** 2, axis=2))
+
+        # Assign each pixel to the closest centroid.
+        labels = np.argmin(distances, axis=1)
+
+        # Compute the new centroids by taking the mean of all pixels assigned to each centroid.
+        new_centroids = np.empty((nQuant, channels))
+        for i in range(nQuant):
+            new_centroids[i] = np.mean(imOrig[labels == i], axis=0)
+
+        # Compute the mean squared error.
+        error = np.mean(distances[np.arange(pixels), labels] ** 2)
+
+        # Save the quantized image and the error.
+        quantized_image = np.empty_like(imOrig)
+        for i in range(nQuant):
+            quantized_image[labels == i] = new_centroids[i]
+        quantized_images.append(quantized_image)
+        errors.append(error)
+
+        # Update the centroids.
+        centroids = new_centroids
+
+    # Scale the pixel values back to range [0, 255] and convert to integer type.
+    quantized_images = [np.round(q * 255).astype(np.uint8) for q in quantized_images]
+
+    return quantized_images, errors
