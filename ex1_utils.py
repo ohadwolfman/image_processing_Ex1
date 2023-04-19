@@ -12,7 +12,7 @@ from typing import List
 
 import numpy as np
 import cv2
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
 
 LOAD_GRAY_SCALE = 1
 LOAD_RGB = 2
@@ -168,21 +168,28 @@ def quantizeImage(imOrig: np.ndarray, nQuant: int, nIter: int) -> (List[np.ndarr
         :param nIter: Number of optimization loops
         :return: (List[qImage_i],List[error_i])
     """
+    # initializes variables for processing the image
     yiqImage = 0
     processingImg = np.copy(imOrig)
+
+    # checks if the input image is in RGB format and converts it to YIQ format for processing
     if imOrig.ndim == 3:
         yiqImage = transformRGB2YIQ(imOrig)
         processingImg = yiqImage[:, :, 0]
 
+    # normalizes the image values between 0-255 for processing.
     processingImg = cv2.normalize(processingImg, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
+
+    # creates a copy of the processed image for later use.
     Orig_copy = processingImg.copy()
 
-    histOrg = np.histogram(processingImg.ravel(), bins=256)[0]
-    cdf = np.cumsum(histOrg)
-    slices_size = cdf[-1] / nQuant
-    slices = [0]
+    histOrg = np.histogram(processingImg.ravel(), bins=256)[0]  # calculates the histogram of pixel intensities
+    cdf = np.cumsum(histOrg)  # calculates the cumulative distribution function (CDF) of the histogram
+    slices_size = cdf[-1] / nQuant  # calculates the size of each slice in the quantized image
+    slices = [0]  # calculates the pixel intensity values that define each slice in the quantized image.
     curr_sum = 0
     curr_index = 0
+
     for i in range(1, nQuant + 1):
         while curr_sum < slices_size and curr_index < 256:
             curr_sum += histOrg[curr_index]
@@ -195,17 +202,21 @@ def quantizeImage(imOrig: np.ndarray, nQuant: int, nIter: int) -> (List[np.ndarr
     slices.pop()
     slices.insert(nQuant, 255)
 
+    # initialize empty lists for storing the quantized images and their mean squared error.
     images_list = []
     MSE_errorList = []
+
+    # loops over the desired number of optimization loops
     for i in range(nIter):
-        quantizeImg = np.zeros(processingImg.shape)
-        intensityAvg = []
+        quantizeImg = np.zeros(processingImg.shape)  # initializes a blank array for storing the quantized image.
+        intensityAvg = []  # calculates the average pixel intensity value for each slice in the quantized image.
+
+        # quantizes the image by assigning pixel values to their corresponding slice average intensity values
         for j in range(1, nQuant + 1):
-            # print(f'j={j}, nQuant={nQuant}, slices={slices}, slices size={len(slices)}')
             try:
-                sliceIntensities = np.array(range(slices[j-1], slices[j]))
-                Pi = histOrg[slices[j-1]:slices[j]]  # Number of times those intensities levels appears in the image.
-                avg = int((sliceIntensities * Pi).sum() / Pi.sum())  # The intensity level that is the average of this slice
+                sliceIntensities = np.array(range(slices[j - 1], slices[j]))
+                Pi = histOrg[slices[j - 1]:slices[j]]
+                avg = int((sliceIntensities * Pi).sum() / Pi.sum())
                 intensityAvg.append(avg)
             except RuntimeWarning:
                 intensityAvg.append(0)
@@ -216,18 +227,22 @@ def quantizeImage(imOrig: np.ndarray, nQuant: int, nIter: int) -> (List[np.ndarr
             quantizeImg[processingImg > slices[k]] = intensityAvg[k]
 
         slices.clear()
+
         for k in range(1, nQuant):
             slices.append(int((intensityAvg[k - 1] + intensityAvg[k]) / 2))
 
         slices.insert(0, 0)
         slices.insert(nQuant, 255)
 
-        MSE_errorList.append((np.sqrt((Orig_copy*255 - quantizeImg) ** 2)).mean())
-        processingImg = quantizeImg
+        MSE_errorList.append((np.sqrt((Orig_copy * 255 - quantizeImg) ** 2)).mean())
+        processingImg = quantizeImg  # sets the current quantized image as the input for the next optimization loop.
         images_list.append(quantizeImg / 255)
+
+        # checks if the optimization has converged based on the mean squared error values
         if checkMSE(MSE_errorList, nIter):
             break
 
+    #  converts the quantized image back to RGB format if the input image was in RGB format
     if imOrig.ndim == 3:
         for i in range(len(MSE_errorList)):
             yiqImage[:, :, 0] = images_list[i]
@@ -240,7 +255,6 @@ def normalizeData(data):
     return (data - np.min(data)) / (np.max(data) - np.min(data))
 
 
-# Boolean function that checks if the equivalent of the last 5 values of the MSE_list
 def checkMSE(MSE_list: List[float], nIter: int) -> bool:
     if len(MSE_list) > nIter / 10:
         for i in range(2, int(nIter / 10) + 1):
