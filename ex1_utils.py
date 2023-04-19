@@ -117,7 +117,7 @@ def hsitogramEqualize(imgOrig: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarra
     processingImg = np.copy(imgOrig)*255
     origSize = processingImg.shape
 
-    if (imgOrig.ndim == 3):
+    if imgOrig.ndim == 3:
         yiqImage = transformRGB2YIQ(imgOrig)
         processingImg = yiqImage[:, :, 0]
         processingImg = cv2.normalize(processingImg, None, 0, 255, cv2.NORM_MINMAX)
@@ -125,7 +125,7 @@ def hsitogramEqualize(imgOrig: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarra
         processingImg = processingImg.astype('uint8')
         histOrg, bins = np.histogram(processingImg.flatten(), bins=256, range=[0, 256])
 
-    elif(imgOrig.ndim == 2):
+    elif imgOrig.ndim == 2:
         processingImg = processingImg.astype('uint8')
         histOrg, bins = np.histogram(processingImg.flatten(), bins=256, range=[0, 256])
     else:
@@ -145,11 +145,11 @@ def hsitogramEqualize(imgOrig: np.ndarray) -> (np.ndarray, np.ndarray, np.ndarra
     processingImg = processingImg.reshape(origSize)
     imEq = processingImg
 
-    if(imgOrig.ndim == 2):
+    if imgOrig.ndim == 2:
         histEQ, binsEq = np.histogram(imEq.flatten(), bins=256, range=[0, 256])
         imEq = imEq / 255
 
-    if (imgOrig.ndim == 3):
+    if imgOrig.ndim == 3:
         yiqImage[:, :, 0] = processingImg/255
         imEq = transformYIQ2RGB(yiqImage)
         histEQ, binsEq = np.histogram((imEq*255).flatten(), bins=256, range=[0, 256])
@@ -168,92 +168,79 @@ def quantizeImage(imOrig: np.ndarray, nQuant: int, nIter: int) -> (List[np.ndarr
         :param nIter: Number of optimization loops
         :return: (List[qImage_i],List[error_i])
     """
-    # part 0 -> exporting the img RGB/Gray and normalize it.
-    isColored = False
-    YIQimg = 0
-    tmpImg = imOrig
-    if len(imOrig.shape) == 3:  # it's RGB convert to YIQ and take the Y dimension
-        YIQimg = transformRGB2YIQ(imOrig)
-        tmpImg = YIQimg[:, :, 0]
-        isColored = True
-    tmpImg = cv2.normalize(tmpImg, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
-    Orig_copy = tmpImg.copy()
+    yiqImage = 0
+    processingImg = np.copy(imOrig)
+    if imOrig.ndim == 3:
+        yiqImage = transformRGB2YIQ(imOrig)
+        processingImg = yiqImage[:, :, 0]
 
-    # Part 1 -> create the first division of borders according to the histogram (goal: equal as possible).
-    histOrg = np.histogram(tmpImg.flatten(), bins=256)[0]
-    cumSum = np.cumsum(histOrg)
-    each_slice = cumSum.max() / nQuant  # ultimate size for each slice
-    # print(each_slice)
-    # print(cumSum)
+    processingImg = cv2.normalize(processingImg, None, 0, 255, cv2.NORM_MINMAX).astype('uint8')
+    Orig_copy = processingImg.copy()
+
+    histOrg = np.histogram(processingImg.ravel(), bins=256)[0]
+    cdf = np.cumsum(histOrg)
+    slices_size = cdf[-1] / nQuant
     slices = [0]
     curr_sum = 0
-    curr_ind = 0
-    for i in range(1, nQuant + 1):  # divide it to slices for the first time.
-        while curr_sum < each_slice and curr_ind < 256:
-            curr_sum += histOrg[curr_ind]
-            curr_ind = curr_ind + 1
-        if slices[-1] != curr_ind - 1:
-            curr_ind = curr_ind - 1
-        slices.append(curr_ind)
+    curr_index = 0
+    for i in range(1, nQuant + 1):
+        while curr_sum < slices_size and curr_index < 256:
+            curr_sum += histOrg[curr_index]
+            curr_index = curr_index + 1
+        if slices[-1] != curr_index - 1:
+            curr_index = curr_index - 1
+        slices.append(curr_index)
         curr_sum = 0
 
     slices.pop()
     slices.insert(nQuant, 255)
-    # print(f'nQuant={nQuant}, slices={slices}, slices size={len(slices)}')
-    # This is how the slices list should look like -> slices[size = @nQuant + 1] = [0, num2, num3,...., 255]
 
-    # part 3 -> quantize the image.
-    images_list = []  # The images list for each iteration
-    MSE_list = []  # The MSE list for each iteration.
+    images_list = []
+    MSE_errorList = []
     for i in range(nIter):
-        quantizeImg = np.zeros(tmpImg.shape)
-        Qi = []  # Intensity average list.
-        # part 3.1 -> calculate the intensity average value for each slice
+        quantizeImg = np.zeros(processingImg.shape)
+        intensityAvg = []
         for j in range(1, nQuant + 1):
             # print(f'j={j}, nQuant={nQuant}, slices={slices}, slices size={len(slices)}')
             try:
-                Si = np.array(range(slices[j-1], slices[j]))  # Which intensities levels is within the range of this slice
-                Pi = histOrg[slices[j-1]:slices[j]]  # How many times those intensities levels appears in the image.
-                avg = int((Si * Pi).sum() / Pi.sum())  # The intensity level that is the average of this slice
-                Qi.append(avg)
+                sliceIntensities = np.array(range(slices[j-1], slices[j]))
+                Pi = histOrg[slices[j-1]:slices[j]]  # Number of times those intensities levels appears in the image.
+                avg = int((sliceIntensities * Pi).sum() / Pi.sum())  # The intensity level that is the average of this slice
+                intensityAvg.append(avg)
             except RuntimeWarning:
-                Qi.append(0)
+                intensityAvg.append(0)
             except ValueError:
-                Qi.append(0)
+                intensityAvg.append(0)
 
-        # part 3.2 -> update the @quantizeImg according to the @Qi average values.
         for k in range(nQuant):
-            quantizeImg[tmpImg > slices[k]] = Qi[k]
+            quantizeImg[processingImg > slices[k]] = intensityAvg[k]
 
         slices.clear()
-        # part 3.3 -> update the slices according to the @Qi values -> slices[k] = average of the Qi[left] and Qi[right]
         for k in range(1, nQuant):
-            slices.append(int((Qi[k - 1] + Qi[k]) / 2))
+            slices.append(int((intensityAvg[k - 1] + intensityAvg[k]) / 2))
 
         slices.insert(0, 0)
         slices.insert(nQuant, 255)
 
-        # part 3.4 -> add MSE and check if done.
-        MSE_list.append((np.sqrt((Orig_copy*255 - quantizeImg) ** 2)).mean())
-        tmpImg = quantizeImg
+        MSE_errorList.append((np.sqrt((Orig_copy*255 - quantizeImg) ** 2)).mean())
+        processingImg = quantizeImg
         images_list.append(quantizeImg / 255)
-        if checkMSE(MSE_list, nIter):  # check whether the last 5 MSE values were not changed if so -> break.
+        if checkMSE(MSE_errorList, nIter):
             break
 
-    # part 4 -> if @imOrig was in RGB color space convert it back.
-    if isColored:
-        for i in range(len(MSE_list)):
-            YIQimg[:, :, 0] = images_list[i]
-            images_list[i] = transformYIQ2RGB(YIQimg)
+    if imOrig.ndim == 3:
+        for i in range(len(MSE_errorList)):
+            yiqImage[:, :, 0] = images_list[i]
+            images_list[i] = transformYIQ2RGB(yiqImage)
 
-    return images_list, MSE_list
+    return images_list, MSE_errorList
 
 
 def normalizeData(data):
     return (data - np.min(data)) / (np.max(data) - np.min(data))
 
 
-# This function checks if the last 5 values of the @MSE_list is the same -> if so returns true.
+# Boolean function that checks if the equivalent of the last 5 values of the MSE_list
 def checkMSE(MSE_list: List[float], nIter: int) -> bool:
     if len(MSE_list) > nIter / 10:
         for i in range(2, int(nIter / 10) + 1):
